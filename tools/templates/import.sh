@@ -162,11 +162,17 @@ case "$TYPE" in
       git worktree add --detach "$WT" "$BRANCH"
       [ "$( cd "$WT" && git rev-parse HEAD )" = "$OLD_REF" ] || die "工作区起点校验失败"
     else
-      # feat/fix 分支从 base commit 新建；main 从本仓远端的 origin/main 新建（bootstrap 场景）
+      # feat/fix 分支优先从 base commit 新建；main 或 base hash 在内网不存在
+      # （squash/git am 重写历史所致）时，回退用内网 main——其 tree 经 main 同步后与基点等价
       START_POINT="$BASE_COMMIT"
-      [ "$BRANCH" = "$MAIN_BRANCH" ] && START_POINT="origin/$MAIN_BRANCH"
+      if [ "$BRANCH" = "$MAIN_BRANCH" ]; then
+        START_POINT="origin/$MAIN_BRANCH"
+      elif ! git cat-file -e "$BASE_COMMIT" 2>/dev/null; then
+        START_POINT="refs/heads/$MAIN_BRANCH"
+        log "基点 commit 在内网不存在（hash 改写），回退从内网 $MAIN_BRANCH 新建分支"
+      fi
       git cat-file -e "$START_POINT" 2>/dev/null \
-        || die "起点缺失：$START_POINT（main 同步落后或远端未获取，先补 main 的同步）"
+        || die "起点缺失：$START_POINT（main 同步落后，请先执行 main 的同步包）"
       git worktree add --detach "$WT" "$START_POINT"
       [ "$( cd "$WT" && git rev-parse HEAD )" = "$(git rev-parse "$START_POINT")" ] \
         || die "工作区起点校验失败"
