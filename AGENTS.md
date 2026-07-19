@@ -20,7 +20,7 @@
 ## 开工引导（每次会话第一步）
 
 1. 读本文件；
-2. 读与任务相关的执行计划（`docs/exec-plans/active/`），需求背景看 `docs/product-specs/`；涉及接口必读 `docs/design-docs/`；
+2. 读 `docs/PLANS.md`（计划索引）与任务相关的执行计划（`docs/exec-plans/active/`），需求背景看 `docs/product-specs/`；涉及接口必读 `docs/design-docs/`；
 3. `git log --oneline main -20` 和 `git diff <自己分支基点>..main --stat`，了解落后期间 main 的变化，需要细节再 `git show`；
 4. 把 main merge 进自己在途的分支（开发线的 feat 必做；修复线跨天存活的 fix 分支同样要做）。
 
