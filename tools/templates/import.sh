@@ -108,15 +108,20 @@ trap on_exit EXIT
 case "$TYPE" in
   sync)
     if [ -n "$OLD_REF" ]; then
-      [ "$(git rev-parse "$BRANCH^{tree}")" = "$PREV_STATE_HASH" ] \
-        || die "状态不连续：分支内容与本包上一状态不符（可能漏包/乱序，请按序号连续执行）"
+      if [ -n "$PREV_STATE_HASH" ]; then
+        [ "$(git rev-parse "$BRANCH^{tree}")" = "$PREV_STATE_HASH" ] \
+          || die "状态不连续：分支内容与本包上一状态不符（可能漏包/乱序，请按序号连续执行）"
+      fi
       git worktree add "$WT" "$BRANCH"
       [ "$( cd "$WT" && git branch --show-current )" = "$BRANCH" ] \
         || die "工作区未落在预期分支 $BRANCH，已中止（未做任何变更）"
     else
-      git cat-file -e "$BASE_COMMIT" 2>/dev/null \
-        || die "base 缺失：main 同步落后，请先执行 main 的同步包"
-      git worktree add "$WT" -b "$BRANCH" "$BASE_COMMIT"
+      # feat/fix 分支从 base commit 新建；main 从本仓远端的 origin/main 新建（bootstrap 场景）
+      START_POINT="$BASE_COMMIT"
+      [ "$BRANCH" = "$MAIN_BRANCH" ] && START_POINT="origin/$MAIN_BRANCH"
+      git cat-file -e "$START_POINT" 2>/dev/null \
+        || die "起点缺失：$START_POINT（main 同步落后或远端未获取，先补 main 的同步）"
+      git worktree add "$WT" -b "$BRANCH" "$START_POINT"
       [ "$( cd "$WT" && git branch --show-current )" = "$BRANCH" ] \
         || die "新建工作区未落在预期分支 $BRANCH，已中止（未做任何变更）"
     fi

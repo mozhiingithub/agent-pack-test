@@ -36,8 +36,10 @@ REMOTE_TIP="$("$SCRIPT_DIR/safe-git.sh" ls-remote origin "$BRANCH" | cut -f1)" \
 [ "$TIP" = "$REMOTE_TIP" ]                    || die "分支 tip 未推送或与远端不一致"
 [ -f "$CHECKS_OK" ]                           || die "缺少本地检查通过标记 $CHECKS_OK"
 [ -n "$(find "$CHECKS_OK" -mtime -1 2>/dev/null)" ] || die "检查标记已过期（>24h），先重跑本地检查"
-[ -f "$SPEC_FILE" ]                           || die "缺少 spec: $SPEC_FILE"
-grep -q "部署影响" "$SPEC_FILE"               || die "spec 缺少「部署影响」一节"
+if [ "$BRANCH" != "$MAIN_BRANCH" ]; then
+  [ -f "$SPEC_FILE" ]                       || die "缺少 spec: $SPEC_FILE"
+  grep -q "部署影响" "$SPEC_FILE"           || die "spec 缺少「部署影响」一节"
+fi
 
 # ================= 固定区 3：状态字段计算 =================
 BASE="$(git merge-base "origin/$MAIN_BRANCH" "$BRANCH")"
@@ -84,6 +86,9 @@ fi
 if [ "$TYPE" = "sync" ]; then
   git format-patch -o "$PKG/payload" "$RANGE_BASE..$BRANCH" >/dev/null
   # 可变区 2：若规定只允许普通文件，改为导出变更文件全集（清单格式不变）
+  if [ "$(git rev-list --count "$RANGE_BASE..$BRANCH")" = "0" ]; then
+    log "提示：本包无新增 commit（仅校验包）"
+  fi
 fi
 
 # ================= 固定区 6：清单文件（纯 bash + git，无 jq）===========
@@ -114,7 +119,11 @@ git -c core.quotePath=false diff --name-status "$BASE..$BRANCH" \
       printf '%s\t%s\t%s\n' "$a" "$b" "$p"
     done > "$PKG/files.txt"
 # configImpact.txt：spec「部署影响」一节原文；"无"/空白视为无影响，不生成该文件
-IMPACT="$(awk '/^#+.*部署影响/{f=1;next} f&&/^#/{exit} f' "$SPEC_FILE")"
+if [ -f "$SPEC_FILE" ]; then
+  IMPACT="$(awk '/^#+.*部署影响/{f=1;next} f&&/^#/{exit} f' "$SPEC_FILE")"
+else
+  IMPACT=""   # main 无对应 spec 文件
+fi
 IMPACT_KEY="$(printf '%s' "$IMPACT" | tr -d '[:space:]')"
 case "$IMPACT_KEY" in "" | 无 | 无。 | none | None | NONE ) IMPACT="" ;; esac
 if [ -n "$IMPACT" ]; then printf '%s\n' "$IMPACT" > "$PKG/configImpact.txt"; fi
@@ -135,6 +144,12 @@ fi
 # 注意：PREV_STATE_HASH 记录的是 tree hash 而非 commit hash——
 # git am 跨机重放会改写 committer 身份/时间，commit hash 跨机不可比，tree 才可比
 echo "$SEQ" > "$SEQ_FILE"; echo "$TREE" > "$PREV_TREE_FILE"; echo "$TIP" > "$PREV_COMMIT_FILE"
+# close 包同时登记 main 的同步基线：close 合入后内网 main 与此 tree 对齐，
+# 后续 main 同步包以此为增量起点（否则 main 无参考点可算增量）
+if [ "$TYPE" = "close" ]; then
+  echo "$TREE" > "$STATE_DIR/prev-tree-$MAIN_BRANCH"
+  git rev-parse "origin/$MAIN_BRANCH" > "$STATE_DIR/prev-commit-$MAIN_BRANCH"
+fi
 PKG_SHA="$(sha256sum "$PKG_ARC" | cut -d' ' -f1)"
 log "包路径: $PKG_ARC"
 log "类型: $TYPE  序号: $SEQ  包体SHA256: $PKG_SHA"
