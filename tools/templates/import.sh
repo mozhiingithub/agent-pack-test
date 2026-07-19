@@ -80,7 +80,7 @@ cd "$REPO" || die "仓库不存在: $REPO"
 # P3-9：https remote 在无凭据环境下推送必挂，提前提示（不阻断）
 REMOTE_URL="$(git remote get-url origin 2>/dev/null || true)"
 case "$REMOTE_URL" in
-  http://*|https://*) log "提示：origin 为 https（$REMOTE_URL）。无凭据帮手时推送会失败，建议改用 SSH（git@gitee.com:...）。" ;;
+  http://*|https://*) log "提示：origin 为 https（$REMOTE_URL）。请确认已配置免密凭据（credential helper/PAT），否则推送将失败；SSH 与 https 均可，关键是免密已配好。" ;;
 esac
 
 git var GIT_COMMITTER_IDENT >/dev/null 2>&1 || die "未配置 git 提交者身份。请先执行：
