@@ -44,9 +44,22 @@ BASE="$(git merge-base "origin/$MAIN_BRANCH" "$BRANCH")"
 TREE="$(git rev-parse "$BRANCH^{tree}")"
 mkdir -p "$STATE_DIR" "$OUT_DIR"
 SAFE_BRANCH="${BRANCH//\//-}"   # 分支名含 /，文件名/路径一律用转义后的安全名
-SEQ_FILE="$STATE_DIR/seq-$SAFE_BRANCH"; PREV_FILE="$STATE_DIR/prev-$SAFE_BRANCH"
+SEQ_FILE="$STATE_DIR/seq-$SAFE_BRANCH"
+PREV_TREE_FILE="$STATE_DIR/prev-tree-$SAFE_BRANCH"
+PREV_COMMIT_FILE="$STATE_DIR/prev-commit-$SAFE_BRANCH"
 SEQ=$(( $(cat "$SEQ_FILE" 2>/dev/null || echo 0) + 1 ))
-PREV="$(cat "$PREV_FILE" 2>/dev/null || echo "")"
+PREV_TREE="$(cat "$PREV_TREE_FILE" 2>/dev/null || echo "")"
+PREV_COMMIT="$(cat "$PREV_COMMIT_FILE" 2>/dev/null || echo "")"
+# 旧版单文件（内容为 tree）一次性迁移
+if [ -z "$PREV_TREE" ] && [ -f "$STATE_DIR/prev-$SAFE_BRANCH" ]; then
+  PREV_TREE="$(cat "$STATE_DIR/prev-$SAFE_BRANCH")"; rm -f "$STATE_DIR/prev-$SAFE_BRANCH"
+fi
+# 增量出包：只有上一包 tip 之后的新 commit 进 payload（全量重放会与内网已应用内容冲突）；
+# 无记录或历史被改写则回退全量
+RANGE_BASE="$BASE"
+if [ -n "$PREV_COMMIT" ] && git merge-base --is-ancestor "$PREV_COMMIT" "$BRANCH" 2>/dev/null; then
+  RANGE_BASE="$PREV_COMMIT"
+fi
 if [ "$TYPE" = "close" ]; then MSG_SRC="origin/$MAIN_BRANCH"; else MSG_SRC="$BRANCH"; fi
 
 # ================= 固定区 4：close 包附加校验 =================
@@ -69,7 +82,7 @@ if printf '%s\n' "$DIFF_FILES" | grep -q "^$PROTECTED_PATH"; then
   die "变更包含保护路径 $PROTECTED_PATH（无豁免）"
 fi
 if [ "$TYPE" = "sync" ]; then
-  git format-patch -o "$PKG/payload" "$BASE..$BRANCH" >/dev/null
+  git format-patch -o "$PKG/payload" "$RANGE_BASE..$BRANCH" >/dev/null
   # 可变区 2：若规定只允许普通文件，改为导出变更文件全集（清单格式不变）
 fi
 
@@ -81,7 +94,7 @@ fi
   printf 'BRANCH="%s"\n' "$BRANCH"
   echo "SEQ=$SEQ"
   echo "BASE_COMMIT=$BASE"
-  printf 'PREV_STATE_HASH="%s"\n' "$PREV"
+  printf 'PREV_STATE_HASH="%s"\n' "$PREV_TREE"
   echo "COMMIT_HASH=$TIP"
   echo "TREE_HASH=$TREE"
 } > "$PKG/manifest.sh"
@@ -121,7 +134,7 @@ else
 fi
 # 注意：PREV_STATE_HASH 记录的是 tree hash 而非 commit hash——
 # git am 跨机重放会改写 committer 身份/时间，commit hash 跨机不可比，tree 才可比
-echo "$SEQ" > "$SEQ_FILE"; echo "$TREE" > "$PREV_FILE"
+echo "$SEQ" > "$SEQ_FILE"; echo "$TREE" > "$PREV_TREE_FILE"; echo "$TIP" > "$PREV_COMMIT_FILE"
 PKG_SHA="$(sha256sum "$PKG_ARC" | cut -d' ' -f1)"
 log "包路径: $PKG_ARC"
 log "类型: $TYPE  序号: $SEQ  包体SHA256: $PKG_SHA"

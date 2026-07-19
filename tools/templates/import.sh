@@ -120,7 +120,13 @@ case "$TYPE" in
       [ "$( cd "$WT" && git branch --show-current )" = "$BRANCH" ] \
         || die "新建工作区未落在预期分支 $BRANCH，已中止（未做任何变更）"
     fi
-    ( cd "$WT" && git am "$PKG_DIR"/payload/*.patch )
+    # 增量 patch 应用；payload 为空（无新增 commit）时跳过 am，仅做校验
+    shopt -s nullglob; PATCHES=( "$PKG_DIR"/payload/*.patch ); shopt -u nullglob
+    if ((${#PATCHES[@]})); then
+      ( cd "$WT" && git am "${PATCHES[@]}" )
+    else
+      log "payload 为空（分支无新增 commit），仅校验状态"
+    fi
     # 校验（全部 git 对象级，CRLF/跨机免疫）：tree + 逐文件 blob
     NEW_TIP="$( cd "$WT" && git rev-parse HEAD )"
     ( cd "$WT" && [ "$(git rev-parse HEAD^{tree})" = "$TREE_HASH" ] ) || die "tree 校验失败"

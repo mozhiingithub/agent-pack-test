@@ -41,16 +41,19 @@ sync-<分支名>-<序号>/
 ├── message.txt      # commit message（close 包用）
 ├── configImpact.txt # 可选：部署影响待办，无则不生成
 ├── files.txt        # TSV 清单：action<TAB>blob<TAB>path，按 path 排序；delete 的 blob 为空
-├── payload/         # 优先 git format-patch 序列；规定只允许普通文件时为变更文件全集
+├── payload/         # 自上一包以来的增量 format-patch 序列（首包为全量）；规定只允许普通文件时为变更文件全集
 └── import.sh        # 内网入口脚本（随模板下发，勿手改）
 ```
+
+打包为 **zip**，文件**平铺在包根**（无外层目录）：执行人把 zip 放到内网仓库一级目录，右键"解压到当前位置"即可。
 
 ## import.sh 行为契约（随包模板必须满足）
 
 AI 维护或下发 import.sh 模板时，必须保证以下行为，缺一即不合格：
 
 - **与执行时所在分支无关**：不要求人员处于任何特定分支。开始先记录现场，随后用 `git worktree` 创建临时工作区，所有检出、应用、合并、校验都在临时工作区内对目标引用操作；不切换人员当前分支、不碰未提交改动；结束（无论成败）移除临时工作区，现场原样恢复；
-- **零参数、自动分派**：自读 manifest，sync 包走建/更新分支流程，close 包走合入 main + 对账 + 删分支流程；
+- **零参数、零配置、自动分派**：向上找 `.git` 自动定位仓库（包须解压到仓库内，约定为一级目录"解压到当前位置"），**执行人不需要编辑脚本任何一行**；自读 manifest，sync 包走建/更新分支流程，close 包走合入 main + 对账 + 删分支流程；
+- **成功后自清**：自动删除包文件（payload、manifest、清单等）并尝试自删除；失败则全部保留以便重跑；
 - **幂等**：重复执行同一包只报告"已是最新"，无副作用；
 - **失败还原**：任何一步失败，目标分支引用恢复执行前的值、临时工作区移除，并输出明确的下一步提示；
 - **包自包含**：重试逻辑内置于 import.sh（与 `tools/safe-git.sh` 同源模板），不依赖内网仓库是否已有 `tools/`——首包执行时仓库里还没有它；网络失败后重新执行本包即恢复（幂等），无需 outbox；每步写日志。
@@ -64,8 +67,8 @@ AI 维护或下发 import.sh 模板时，必须保证以下行为，缺一即不
 | branch | `BRANCH` | 分支名 |
 | seq | `SEQ` | 脚本自增，**AI 不得读写状态文件** |
 | baseCommit | `BASE_COMMIT` | `git merge-base`，与 main 的分叉点 |
-| prevStateHash | `PREV_STATE_HASH` | 上一包的 COMMIT_HASH，空 = 首包；防漏包乱序 |
-| commitHash | `COMMIT_HASH` | 分支 tip |
+| prevStateHash | `PREV_STATE_HASH` | 上一包的 TREE_HASH（commit hash 因 committer 被 git am 改写而跨机不可比，tree 才可比），空 = 首包；防漏包乱序 |
+| commitHash | `COMMIT_HASH` | 外网分支 tip（仅记录与展示，不参与跨机一致性校验） |
 | treeHash | `TREE_HASH` | `git rev-parse <分支>^{tree}`，最终树校验值 |
 | message | `message.txt` | sync：tip commit message；close：squash 合入 main 的 message |
 | files | `files.txt` | `action<TAB>blob<TAB>path`，按 path 排序；blob 为 git 对象 hash |
