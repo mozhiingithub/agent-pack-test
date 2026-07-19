@@ -1,0 +1,14 @@
+{
+  "name": "agent-pack-test-board",
+  "version": "0.1.0",
+  "private": true,
+  "description": "极简留言板：AI 双工协作模式试运行项目",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test tests/*.test.js",
+    "check": "bash tools/check.sh"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

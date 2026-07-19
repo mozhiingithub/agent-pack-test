@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# agent-pack 本地状态与产物（不入库）
+.sync-state/
+outbox/
+data/
+.checks-ok

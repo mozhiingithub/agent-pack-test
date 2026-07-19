@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# .githooks/pre-push — 拦截裸 git push，强制走 tools/safe-git.sh
+#
+# 安装方式（仓库内执行一次，全仓库生效并随仓库版本化）：
+#   mkdir -p .githooks && cp agent-pack/templates/githooks/pre-push .githooks/
+#   chmod +x .githooks/pre-push
+#   git config core.hooksPath .githooks
+#
+# 原理：safe-git.sh 内部会 export SAFE_GIT_WRAPPER=1，裸 push 没有该变量即拒绝。
+# 注意：git push --no-verify 可跳过钩子——这不是漏洞，属于审计可发现的违规；
+# 技术手段只是让"无心的绕过"不再发生，最终约束仍是 AGENTS.md 铁律。
+
+if [ -z "${SAFE_GIT_WRAPPER:-}" ]; then
+  echo "[hook] 禁止裸 git push：请使用 tools/safe-git.sh push ...（含自动重试/挂起）" >&2
+  exit 1
+fi
+exit 0
