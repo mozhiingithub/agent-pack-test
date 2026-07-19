@@ -190,6 +190,9 @@ case "$TYPE" in
     done < "$PKG_DIR/files.txt"
     # P1-4：detached 工作区完成后写回分支引用（分支被其他工作区占用也不受影响）
     git update-ref "refs/heads/$BRANCH" "$NEW_TIP"
+    if [ "$(git branch --show-current)" = "$BRANCH" ]; then
+      log "注意：你的工作区正停在 $BRANCH，引用已推进至 $NEW_TIP，请执行 git reset --hard 同步显示"
+    fi
     if [ -f "$PKG_DIR/configImpact.txt" ]; then
       log "待办（部署 latest 前必须消化）："; cat "$PKG_DIR/configImpact.txt"
     fi
