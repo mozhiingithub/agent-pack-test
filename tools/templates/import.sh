@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# import.sh — 内网同步包导入脚本（参考骨架 v4，Windows Git Bash 可用，无 jq 依赖）
-# 用法: 在 Git Bash 中执行 ./import.sh（零参数，自读同目录 manifest.sh）
+# import.sh — 内网同步包导入脚本（参考骨架 v7，Windows Git Bash 可用，无 jq 依赖）
+# 用法: ① 把 zip 拷到内网仓库一级目录；② 右键“解压到当前位置”；
+#       ③ Git Bash 执行 ./import.sh —— 零参数、零配置，成功后自动清理包文件。
 #
 # 环境约定：内网执行机是 Windows 个人电脑 + Git Bash，只装了 git。
 #          脚本只依赖 git 与基础 bash 命令；内容校验一律用 git 对象 hash
 #          （blob/tree），天然免疫 Windows 换行符（CRLF）差异。
 # 网络约定：重试逻辑内置于本脚本（与 tools/safe-git.sh 同源模板）——
 #          同步包必须自包含，不依赖内网仓库里是否已有 tools/（首包引导）。
-#          失败即还原，恢复后重新执行本包（幂等），故无需 outbox。
+#          失败即还原并保留包文件，恢复后重新执行本包（幂等），故无需 outbox。
+# 校验约定：git am 跨机重放会改写 committer 身份/时间，commit hash 跨机不可比；
+#          因此一切跨机一致性校验（幂等/连续/逐文件/对账）一律用 tree/blob hash。
 # 结构约定：【固定区】不得修改；【可变区】按内网环境实现，接口不变。
 
 set -euo pipefail
@@ -16,10 +19,16 @@ log() { printf '[import] %s %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { echo "[import] ERROR: $*" >&2; exit 1; }
 
 # ================= 可变区 1：内网环境约定 =================
-REPO="$HOME/repos/project"           # 内网仓库路径
 MAIN_BRANCH="main"
 PROTECTED_PATH="deploy-intranet/"
 DEPLOY_TRIGGER=""                    # latest 部署触发命令；空则只打印待办
+
+# ================= 固定区 0：定位仓库（零配置，无需编辑脚本） ============
+# 约定：包解压到内网仓库一级目录（或仓库内任意位置），脚本向上找 .git 自动定位。
+# 例外：包在仓库外时，用环境变量 IMPORT_REPO 显式指定。
+REPO="${IMPORT_REPO:-$(git -C "$PKG_DIR" rev-parse --show-toplevel 2>/dev/null || true)}"
+[ -n "$REPO" ] || die "未定位内网仓库：请把本包解压到内网仓库目录内再执行（或用 IMPORT_REPO=/path 指定）"
+log "内网仓库: $REPO"
 
 # ================= 固定区 1：网络出口（内置重试，本脚本唯一联网通道）======
 BACKOFFS=(5 15 45 120 300)
@@ -50,7 +59,7 @@ net() {
 }
 
 # ================= 固定区 2：读取并校验 manifest =================
-[ -f "$PKG_DIR/manifest.sh" ] || die "缺少 manifest.sh"
+[ -f "$PKG_DIR/manifest.sh" ] || die "缺少 manifest.sh（若已成功执行过，包文件已被自动清理）"
 source "$PKG_DIR/manifest.sh"
 [ "${SCHEMA_VERSION:-}" = "1" ] || die "未知 SCHEMA_VERSION，拒收"
 : "${TYPE:?缺字段 TYPE}" "${BRANCH:?缺字段 BRANCH}" "${SEQ:?缺字段 SEQ}" \
@@ -61,13 +70,19 @@ PREV_STATE_HASH="${PREV_STATE_HASH:-}"
 
 cd "$REPO" || die "仓库不存在: $REPO"
 
+# git am 需要提交者身份；缺失时给出明确指引，而不是中途报 "Committer identity unknown"
+git var GIT_COMMITTER_IDENT >/dev/null 2>&1 || die "未配置 git 提交者身份。请先执行：
+  git config --global user.name \"你的名字\"
+  git config --global user.email \"你的邮箱\"
+然后重新执行本包（幂等，无副作用）。"
+
 # ================= 固定区 3：同步远端（内置重试） =================
 net fetch origin
 
-# ================= 固定区 4：幂等 =================
+# ================= 固定区 4：幂等（tree 比对，跨机可比）=================
 if git rev-parse --verify "$BRANCH" >/dev/null 2>&1 \
-   && git merge-base --is-ancestor "$COMMIT_HASH" "$BRANCH" 2>/dev/null; then
-  log "已是最新（$COMMIT_HASH 已在 $BRANCH 上），无副作用退出"; exit 0
+   && [ "$(git rev-parse "$BRANCH^{tree}")" = "$TREE_HASH" ]; then
+  log "已是最新（$BRANCH 内容与本包一致），无副作用退出"; exit 0
 fi
 
 # ================= 固定区 5：现场保护（与执行时所在分支无关）=========
@@ -93,18 +108,22 @@ trap on_exit EXIT
 case "$TYPE" in
   sync)
     if [ -n "$OLD_REF" ]; then
-      [ "$OLD_REF" = "$PREV_STATE_HASH" ] \
-        || die "状态不连续：分支当前 $OLD_REF，期望 ${PREV_STATE_HASH:-首包}（可能漏包/乱序）"
-      git worktree add "$WT" "$BRANCH" >/dev/null 2>&1
+      [ "$(git rev-parse "$BRANCH^{tree}")" = "$PREV_STATE_HASH" ] \
+        || die "状态不连续：分支内容与本包上一状态不符（可能漏包/乱序，请按序号连续执行）"
+      git worktree add "$WT" "$BRANCH"
+      [ "$( cd "$WT" && git branch --show-current )" = "$BRANCH" ] \
+        || die "工作区未落在预期分支 $BRANCH，已中止（未做任何变更）"
     else
       git cat-file -e "$BASE_COMMIT" 2>/dev/null \
         || die "base 缺失：main 同步落后，请先执行 main 的同步包"
-      git worktree add "$WT" -b "$BRANCH" "$BASE_COMMIT" >/dev/null 2>&1
+      git worktree add "$WT" -b "$BRANCH" "$BASE_COMMIT"
+      [ "$( cd "$WT" && git branch --show-current )" = "$BRANCH" ] \
+        || die "新建工作区未落在预期分支 $BRANCH，已中止（未做任何变更）"
     fi
     ( cd "$WT" && git am "$PKG_DIR"/payload/*.patch )
-    # 校验（全部 git 对象级，CRLF 免疫）：tree、commit、逐文件 blob
+    # 校验（全部 git 对象级，CRLF/跨机免疫）：tree + 逐文件 blob
+    NEW_TIP="$( cd "$WT" && git rev-parse HEAD )"
     ( cd "$WT" && [ "$(git rev-parse HEAD^{tree})" = "$TREE_HASH" ] ) || die "tree 校验失败"
-    ( cd "$WT" && [ "$(git rev-parse HEAD)" = "$COMMIT_HASH" ] ) || die "commit 校验失败"
     while IFS=$'\t' read -r action blob path; do
       if [ "$action" = "delete" ]; then
         ( cd "$WT" && ! git cat-file -e "HEAD:$path" 2>/dev/null ) || die "应删除的文件仍存在: $path"
@@ -117,12 +136,14 @@ case "$TYPE" in
       log "待办（部署 latest 前必须消化）："; cat "$PKG_DIR/configImpact.txt"
     fi
     net push origin "$BRANCH"
-    # 推送后确认远端真的收到（ls-remote 同样经内置重试）
+    # 推送后确认远端真的收到：远端 tip 必须等于本地重放后的新 tip
     REMOTE_TIP="$(net ls-remote origin "$BRANCH" | cut -f1)"
-    [ "$REMOTE_TIP" = "$COMMIT_HASH" ] || die "远端确认失败：Gitee 上 $BRANCH 与预期不一致"
+    [ "$REMOTE_TIP" = "$NEW_TIP" ] || die "远端确认失败：Gitee 上 $BRANCH 与本地推送结果不一致"
     ;;
   close)
-    git worktree add "$WT" "$MAIN_BRANCH" >/dev/null 2>&1
+    git worktree add "$WT" "$MAIN_BRANCH"
+    [ "$( cd "$WT" && git branch --show-current )" = "$MAIN_BRANCH" ] \
+      || die "工作区未落在预期分支 $MAIN_BRANCH，已中止（未做任何变更）"
     ( cd "$WT" && git merge --squash "$BRANCH" && git commit -F "$PKG_DIR/message.txt" )
     NEW_SHA="$( cd "$WT" && git rev-parse HEAD )"
     # 对账：内网 main 顶层排除保护目录后的 tree 必须等于外网 main 的 TREE_HASH
@@ -141,4 +162,10 @@ esac
 # ================= 固定区 7：成功收尾 =================
 log "完成：$TYPE $BRANCH ($COMMIT_HASH)"
 if [ -n "$DEPLOY_TRIGGER" ]; then "$DEPLOY_TRIGGER"; else log "下一步：触发 latest 部署"; fi
+
+# ================= 固定区 8：清理包文件（仅成功后；失败保留以便重跑）======
+rm -rf "$PKG_DIR/payload"
+rm -f "$PKG_DIR/manifest.sh" "$PKG_DIR/message.txt" "$PKG_DIR/files.txt" "$PKG_DIR/configImpact.txt"
+log "包文件已清理。"
+rm -f "$0" 2>/dev/null || true   # 自删除；Windows 文件占用时残留可手动删除
 exit 0
