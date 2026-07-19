@@ -15,6 +15,7 @@
 4. **网络操作只走 `tools/` 包装脚本**：禁止裸 `git push` / `git fetch`；重试、挂起、原子化由脚本保证（见 `skills/network-safe-git`）。
 5. **commit message 统一 `type(scope): 摘要`**，type ∈ `feat` / `fix` / `refactor` / `config`；fix 正文必须写根因；涉及对外行为、接口、数据结构变化必须在正文写明。
 6. **spec 先行**：动手前 spec 已存在且经人确认；完成后更新 spec 状态。
+7. **机制修复不搭车**：tools/、.agents/、本文件等机制修复走 main 或独立 fix 分支，禁止落在在途交付分支上——会造成"被合并的不是被实测的"以及一连串对齐补救。
 
 ## 开工引导（每次会话第一步）
 

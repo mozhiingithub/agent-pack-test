@@ -15,6 +15,7 @@ STATE_DIR="$(git rev-parse --show-toplevel)/.sync-state"
 OUTBOX="$STATE_DIR/outbox"
 BACKOFFS=(5 15 45 120 300)
 export SAFE_GIT_WRAPPER=1
+export GIT_TERMINAL_PROMPT=0   # 鉴权提示直接失败，不进入交互挂起
 
 # 固定区：代理支持（人指定，存于 .sync-state/proxy，一行 URL；不存在则直连）
 if [ -f "$STATE_DIR/proxy" ]; then

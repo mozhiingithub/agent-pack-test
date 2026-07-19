@@ -66,9 +66,15 @@ if [ "$TYPE" = "close" ]; then MSG_SRC="origin/$MAIN_BRANCH"; else MSG_SRC="$BRA
 
 # ================= 固定区 4：close 包附加校验 =================
 if [ "$TYPE" = "close" ]; then
-  git merge-base --is-ancestor "$BRANCH" "origin/$MAIN_BRANCH" \
-    || git diff --quiet "origin/$MAIN_BRANCH" "$BRANCH" \
-    || die "分支未合入 main 且与 main 有 diff，不能出 close 包"
+  if ! git merge-base --is-ancestor "$BRANCH" "origin/$MAIN_BRANCH" \
+     && ! git diff --quiet "origin/$MAIN_BRANCH" "$BRANCH"; then
+    HINT=""
+    if git diff --name-only "origin/$MAIN_BRANCH" "$BRANCH" | grep -qE '^(tools/|\.agents/)' \
+       && ! git diff --name-only "origin/$MAIN_BRANCH" "$BRANCH" | grep -vqE '^(tools/|\.agents/)'; then
+      HINT="（差异仅在 tools/ 与 .agents/ 机制路径：按 merge-and-close 时序约定——先出 close 包，再推送 main 上的机制修复）"
+    fi
+    die "分支未合入 main 且与 main 有 diff，不能出 close 包$HINT"
+  fi
 fi
 
 # ================= 固定区 5：组包（保护路径硬阻断）=================
